@@ -1,0 +1,404 @@
+/* ZADANIE 1. */
+/* Ustawienie opcji, które pozwalają na śledzenie działań makr, zmiennych oraz generowanie komunikatów o błędach */
+option mprint mlogic symbolgen;
+
+/* Tworzenie zestawu danych B_POLISY, który zawiera dane dotyczące polis ubezpieczeniowych */
+data B_POLISY;
+    /* Wczytywanie danych z odpowiednimi formatami dla zmiennych */
+    input ID :best. RODZAJ :$2. DATA_ZAWARCIA :best. OCHRONA_OD :best. OCHRONA_DO :best.;
+    /* Formatowanie zmiennych DATY w formacie YYYY-MM-DD */
+    format DATA_ZAWARCIA yymmdd10. OCHRONA_OD yymmdd10. OCHRONA_DO yymmdd10.;
+    /* Wprowadzenie danych bezpośrednio do zestawu danych */
+    datalines;
+1 OC 21153 21185 21549
+2 OC 21257 21258 21622
+3 AC 21216 21217 21581
+4 AC 21275 21279 21643
+;
+run;
+
+
+/* Ustawienie makrozmiennych, które będą używane w dalszej części kodu */
+%LET _RODZAJ = AC;
+%LET _DATA_START = '1JAN2018'd;
+/* Wyświetlenie wartości makrozmiennych w logu */
+%put ### RODZAJ ###       : &_rodzaj.;
+%put ### DATA_START ###   : &_data_start.;
+
+
+/* Definicja makra aktywnosc_umow, które przetwarza dane na podstawie rodzaju polisy i daty początkowej */
+%MACRO aktywnosc_umow(_rodzaj=, _data_start=);
+
+    /* Tworzenie nowego zestawu danych AKTYWNOSC_UMOW na podstawie zestawu B_POLISY */
+    data AKTYWNOSC_UMOW;
+        set B_POLISY;
+        
+        /* Definicja długości zmiennych oraz zmiennych do analizy */
+        length KWARTAL_ZAWARCIA $6. CZY_AKTYWNA_Q1 - CZY_AKTYWNA_Q6 8. ;
+
+        /* Przekształcenie dat na format kwartału */
+        KWARTAL_ZAWARCIA = put(DATA_ZAWARCIA, yyq6.);
+        KWARTAL_OD = put(OCHRONA_OD, yyq6.);
+        KWARTAL_DO = put(OCHRONA_DO, yyq6.);
+        
+        /* Pętla do obliczania aktywności dla kolejnych kwartałów */
+        %DO i = 1 %to 6;
+            /* Obliczanie następnego kwartału w oparciu o datę początkową */
+            %let _nastepny_kwartal = %sysfunc(INTNX(quarter, &_DATA_START., &i.), yyq6.);
+            /* Wyświetlenie obliczonego następnego kwartału w logu */
+            %put ### NASTEPNY_KWARTAL ###   : &_nastepny_kwartal.;
+            /* Ustalenie, czy polisa jest aktywna w danym kwartale */
+            CZY_AKTYWNA_Q&i = ifn((KWARTAL_OD < "&_nastepny_kwartal." <= KWARTAL_DO), 1, 0);
+            
+        %END;
+        
+        /* Filtracja danych według rodzaju polisy */
+        where RODZAJ = symget("_rodzaj");
+        
+        /* Zachowanie tylko wybranych zmiennych w zestawie danych */
+        keep ID RODZAJ KWARTAL_ZAWARCIA CZY_AKTYWNA_Q1 - CZY_AKTYWNA_Q6;
+    run;
+
+%mend aktywnosc_umow;
+
+/* Wywołanie makra z określonymi wartościami makrozmiennych */
+%aktywnosc_umow(_rodzaj=&_RODZAJ., _data_start=&_DATA_START.);
+
+
+/* Wyświetlenie zawartości zestawu danych B_POLISY, posortowanego według numerów zmiennych */
+proc contents data=B_POLISY order=varnum;run;
+/* Wyświetlenie zawartości zestawu danych AKTYWNOSC_UMOW, posortowanego według numerów zmiennych */
+proc contents data=AKTYWNOSC_UMOW order=varnum;run;
+/* Wyświetlenie zawartości zestawu danych AKTYWNOSC_UMOW */
+proc print data=AKTYWNOSC_UMOW;run;
+
+
+
+
+
+
+/* ZADANIE 2. */
+/* Utworzenie tabeli B_POLISY z odpowiednimi kolumnami i kluczem podstawowym */
+proc sql;
+
+    /* Definicja tabeli B_POLISY z kolumnami ID, RODZAJ, OCHRONA_OD, OCHRONA_DO oraz kluczem podstawowym na ID */
+    CREATE TABLE B_POLISY (
+        ID INT,
+        RODZAJ VARCHAR(2),
+        OCHRONA_OD DATE FORMAT=yymmdd10.,
+        OCHRONA_DO DATE FORMAT=yymmdd10.,
+        CONSTRAINT B_POLISY_pkey PRIMARY KEY (ID)
+    )
+;quit;
+
+/* Utworzenie tabeli B_SZKODY z odpowiednimi kolumnami i kluczem podstawowym */
+proc sql;
+
+    /* Definicja tabeli B_SZKODY z kolumnami ID, ID_POLISY, TYP_SZKODY, DATA_ZDARZENIA oraz kluczem podstawowym na ID */
+    CREATE TABLE B_SZKODY (
+        ID INT,
+        ID_POLISY INT,
+        TYP_SZKODY VARCHAR(1),
+        DATA_ZDARZENIA DATE FORMAT=yymmdd10.,
+        CONSTRAINT B_SZKODY_pkey PRIMARY KEY (ID)
+    )
+;quit;
+
+/* Dodanie klucza obcego do tabeli B_SZKODY, który odwołuje się do ID w tabeli B_POLISY */
+proc sql;
+    ALTER TABLE B_SZKODY
+    ADD CONSTRAINT B_SZKODY_ID_POLISY_fkey FOREIGN KEY (ID_POLISY) REFERENCES B_POLISY (ID);
+quit;
+
+/* Wstawienie danych do tabeli B_POLISY oraz B_SZKODY */
+proc sql;
+    /* Dodanie wierszy do tabeli B_POLISY */
+    insert into B_POLISY values (1, 'OC', 21185, 21549);
+    insert into B_POLISY values (2, 'OC', 21258, 21622);
+    insert into B_POLISY values (3, 'AC', 21217, 21581);
+    insert into B_POLISY values (4, 'AC', 21279, 21643);
+    
+    /* Dodanie wierszy do tabeli B_SZKODY */
+    insert into B_SZKODY values (1, 1, 'P', 21294);
+    insert into B_SZKODY values (2, 1, 'O', 21452);
+    insert into B_SZKODY values (3, 2, 'P', 21305);
+    insert into B_SZKODY values (4, 3, 'P', 21380);
+quit;
+
+
+/* Przykład użycia SQL do tworzenia i przetwarzania danych */
+proc sql;
+    /* Utworzenie tabeli sql_example, która łączy dane z B_POLISY i B_SZKODY */
+    CREATE TABLE sql_example AS
+    SELECT
+        B_POLISY.ID AS ID_POLISY, /* Wybór kolumny ID z tabeli B_POLISY i nadanie jej aliasu ID_POLISY */
+        B_POLISY.RODZAJ AS RODZAJ_POLISY, /* Wybór kolumny RODZAJ z tabeli B_POLISY i nadanie jej aliasu RODZAJ_POLISY */
+        B_POLISY.OCHRONA_OD, /* Wybór kolumny OCHRONA_OD z tabeli B_POLISY */
+        B_POLISY.OCHRONA_DO, /* Wybór kolumny OCHRONA_DO z tabeli B_POLISY */
+        B_SZKODY.ID AS ID_SZKODY, /* Wybór kolumny ID z tabeli B_SZKODY i nadanie jej aliasu ID_SZKODY */
+        B_SZKODY.TYP_SZKODY, /* Wybór kolumny TYP_SZKODY z tabeli B_SZKODY */
+        B_SZKODY.DATA_ZDARZENIA, /* Wybór kolumny DATA_ZDARZENIA z tabeli B_SZKODY */
+        /* Obliczanie, czy zdarzenie obciąża polisę na podstawie przedziału dat */
+        CASE WHEN B_SZKODY.DATA_ZDARZENIA BETWEEN B_POLISY.OCHRONA_OD AND B_POLISY.OCHRONA_DO THEN 1 ELSE 0 END AS CZY_ZDARZENIE_OBCIAZA_POLISE
+    FROM B_POLISY
+    /* Łączenie tabeli B_POLISY z tabelą B_SZKODY */
+    LEFT JOIN B_SZKODY
+    ON B_POLISY.ID = B_SZKODY.ID_POLISY
+;quit;
+
+
+/* Przykład użycia MERGE do łączenia tabel */
+data merge_example;
+    /* Łączenie tabeli B_POLISY i B_SZKODY, z zamianą nazw kolumn */
+    merge B_POLISY (rename=(ID=ID_POLISY RODZAJ=RODZAJ_POLISY)) B_SZKODY (rename=(ID=ID_SZKODY));
+    /* Łączenie danych na podstawie ID_POLISY */
+    by ID_POLISY;
+    
+    /* Sprawdzenie, czy data zdarzenia mieści się w zakresie ochrony polisy */
+    if OCHRONA_OD < DATA_ZDARZENIA < OCHRONA_DO then do;
+        CZY_ZDARZENIE_OBCIAZA_POLISE = 1;
+    end;
+    else do;
+        CZY_ZDARZENIE_OBCIAZA_POLISE = 0;
+    end;
+run;
+
+
+/* Przykład użycia HASH TABLE do przetwarzania danych */
+data hash_example;
+
+    /* Wczytywanie danych z tabeli B_POLISY */
+    set B_POLISY;
+    length typ_szkody $ 1 data_zdarzenia id_szkody 8.;
+
+    /* Inicjalizacja obiektu HASH tylko przy pierwszym przetworzeniu */
+    if _n_=1 then do;
+
+        /* Deklaracja obiektu HASH dla tabeli B_SZKODY, z odpowiednimi nazwami kluczy */
+        declare hash h_polisy(dataset:"B_SZKODY(rename=(ID = ID_SZKODY ID_POLISY = ID)", multidata: "Y");
+        h_polisy.defineKey("ID");
+        h_polisy.defineData('id_szkody','typ_szkody','data_zdarzenia');
+        h_polisy.defineDone();
+
+    end;
+
+    /* Wczytywanie danych z tabeli B_POLISY i łączenie z danymi z HASH */
+    set B_POLISY;
+    rc = h_polisy.find(key:ID);
+    
+    /* Sprawdzenie, czy znaleziono dane w HASH */
+    if (rc = 0) then do;
+
+        output;
+        rc2 = h_polisy.find_next(key: ID);
+        /* Wypisywanie wszystkich pasujących wierszy z HASH */
+        do while (rc2 = 0);
+            output;
+            rc2 = h_polisy.find_next(key: ID);
+        end;
+    end;
+    else do;
+        output;
+    end;
+    /* Formatowanie daty zdarzenia */
+    format data_zdarzenia YYMMDD10.;
+    /* Usunięcie zmiennych pomocniczych */
+    drop rc rc2;
+run;
+
+/* Wyświetlenie zawartości tabeli B_POLISY z posortowanymi zmiennymi */
+proc contents data=B_POLISY order=varnum;run;
+/* Wyświetlenie zawartości tabeli B_SZKODY z posortowanymi zmiennymi */
+proc contents data=B_SZKODY order=varnum;run;
+/* Wyświetlenie wyników zapytania SQL w tabeli sql_example */
+proc print data=sql_example;run;
+/* Wyświetlenie wyników łączenia tabel w tabeli merge_example */
+proc print data=merge_example;run;
+/* Wyświetlenie wyników przetwarzania danych w tabeli hash_example */
+proc print data=hash_example;run;
+
+
+
+/* ZADANIE 3. */
+/* Usunięcie tabel MART_SZK i MART_UB, jeśli istnieją */
+proc sql;
+    DROP TABLE MART_SZK;
+    DROP TABLE MART_UB;
+;quit;
+
+/* Utworzenie tabeli MART_UB z odpowiednimi kolumnami i kluczem podstawowym */
+proc sql;
+
+    /* Definicja tabeli MART_UB z kolumnami ID_REKORDU, ID_OSOBY, ID_POLISY, RODZAJ_POLISY oraz kluczem podstawowym na ID_REKORDU */
+    CREATE TABLE MART_UB (
+        ID_REKORDU INT,
+        ID_OSOBY INT,
+        ID_POLISY VARCHAR(5),
+        RODZAJ_POLISY VARCHAR(2),
+        CONSTRAINT MART_UB_pkey PRIMARY KEY (ID_REKORDU)
+    )
+;quit;
+
+/* Utworzenie tabeli MART_SZK z odpowiednimi kolumnami i kluczem podstawowym */
+proc sql;
+
+    /* Definicja tabeli MART_SZK z kolumnami ID_REKORDU, ID_OSOBY, ID_SZKODY, ID_POLISY, ROLA oraz kluczem podstawowym na ID_REKORDU */
+    CREATE TABLE MART_SZK (
+        ID_REKORDU INT,
+        ID_OSOBY INT,
+        ID_SZKODY VARCHAR(5),
+        ID_POLISY VARCHAR(5),
+        ROLA VARCHAR(1),
+        CONSTRAINT MART_UB_pkey PRIMARY KEY (ID_REKORDU)
+    )
+;quit;
+
+/* Wstawienie danych do tabel MART_UB i MART_SZK */
+proc sql;
+    /* Dodanie wierszy do tabeli MART_UB */
+    insert into MART_UB values (1, 1, 'POL_1', 'OC');
+    insert into MART_UB values (2, 1, 'POL_2', 'AC');
+    insert into MART_UB values (3, 2, 'POL_3', 'OC');
+    insert into MART_UB values (4, 3, 'POL_3', 'OC');
+    insert into MART_UB values (5, 4, 'POL_4', 'OC');
+    insert into MART_UB values (6, 5, 'POL_5', 'AC');
+    
+    /* Dodanie wierszy do tabeli MART_SZK */
+    insert into MART_SZK values (1, 1, 'SZK_1', 'POL_1', 'U');
+    insert into MART_SZK values (2, 1, 'SZK_1', 'POL_1', 'S');
+    insert into MART_SZK values (3, 6, 'SZK_1', 'POL_1', 'P');
+    insert into MART_SZK values (4, 2, 'SZK_2', 'POL_3', 'U');
+    insert into MART_SZK values (5, 3, 'SZK_2', 'POL_3', 'U');
+    insert into MART_SZK values (6, 3, 'SZK_2', 'POL_3', 'S');
+    insert into MART_SZK values (7, 5, 'SZK_3', 'POL_5', 'K');
+    insert into MART_SZK values (8, 5, 'SZK_3', 'POL_5', 'P');
+    insert into MART_SZK values (9, 1, 'SZK_4', 'POL_1', 'S');
+    insert into MART_SZK values (10, 1, 'SZK_4', 'POL_1', 'U');
+quit;
+
+/* Definicja formatu dla kolumny ROLA */
+proc format;
+    value $role
+        'U'='ubezpieczony' /* Kod 'U' oznacza ubezpieczonego */
+        'S'='sprawca' /* Kod 'S' oznacza sprawcę */
+        'P'='poszkodowany' /* Kod 'P' oznacza poszkodowanego */
+        'K'='kierujacy' /* Kod 'K' oznacza kierującego */
+        other='INCORRECT CODE'; /* Inne wartości oznaczają niepoprawny kod */
+run;
+
+/* Wyświetlenie struktury tabel MART_UB i MART_SZK */
+proc contents data=MART_UB order=varnum;run;
+proc contents data=MART_SZK order=varnum;run;
+
+/* Wyświetlenie zawartości tabeli MART_SZK z zastosowaniem formatu dla kolumny ROLA */
+proc print data=MART_SZK;
+    format ROLA $role.;
+run;
+
+/* Wyświetlenie zawartości tabeli MART_UB */
+proc print data=MART_UB;
+run;
+
+/* Przykład zapytania SQL */
+proc sql;
+    /* Wybór osób z tabeli MART_UB, które nie występują w tabeli MART_SZK, oraz dodanie opisu "zero zdarzen" */
+    SELECT
+        MART_UB.*,
+        "zero zdarzen" AS profil_osoby 
+    FROM MART_UB
+    WHERE MART_UB.ID_OSOBY NOT IN (SELECT MART_SZK.ID_OSOBY FROM MART_SZK)
+    
+    /* Połączenie z drugim zapytaniem, które wybiera osoby z przynajmniej dwoma zdarzeniami jako sprawcy */
+    UNION
+    
+    /* Wybór osób z tabeli MART_UB, które mają przynajmniej dwa zdarzenia jako sprawcy, oraz dodanie opisu "sprawca przynajmniej dwa razy" */
+    SELECT
+        MART_UB.*,
+        "sprawca przynajmniej dwa razy" AS profil_osoby
+    FROM MART_UB
+    WHERE MART_UB.ID_OSOBY IN (
+        SELECT DISTINCT ID_OSOBY FROM (
+            /* Wybór osób, roli i liczby zdarzeń jako sprawca */
+            SELECT
+                MART_SZK.ID_OSOBY,
+                MART_SZK.ROLA,
+                COUNT(MART_SZK.ID_OSOBY) AS ID_OSOBY_COUNT
+            FROM MART_SZK
+            WHERE ROLA='S'
+            GROUP BY
+                MART_SZK.ROLA,
+                MART_SZK.ID_OSOBY
+            HAVING ID_OSOBY_COUNT >= 2
+        )
+    )
+;quit;
+
+
+
+/* ZADANIE 4. */
+/* Usunięcie tabeli LOGI_SYSTEMOWE, jeśli istnieje */
+DROP TABLE IF EXISTS LOGI_SYSTEMOWE;
+
+/* Utworzenie tabeli LOGI_SYSTEMOWE z odpowiednimi kolumnami i kluczem podstawowym */
+CREATE TABLE IF NOT EXISTS LOGI_SYSTEMOWE (
+    ID SERIAL PRIMARY KEY, -- Kolumna ID jako klucz główny z automatycznym inkrementowaniem wartości
+    RODZAJ TEXT, -- Kolumna RODZAJ do przechowywania typu zdarzenia
+    CZAS_AKTYWNOSCI TIMESTAMP, -- Kolumna CZAS_AKTYWNOSCI do przechowywania znacznika czasu zdarzenia
+    LOGIN TEXT -- Kolumna LOGIN do przechowywania loginu użytkownika
+);
+
+
+/* Generowanie 10.000 losowych wierszy */
+INSERT INTO LOGI_SYSTEMOWE (RODZAJ, CZAS_AKTYWNOSCI, LOGIN)
+SELECT
+    -- Generowanie losowej wartości dla kolumny RODZAJ
+    CASE FLOOR(random()*(4-0+1))+0
+        WHEN 0 THEN 'LOGOWANIE'
+        WHEN 1 THEN 'POBRANIE_PLIKU'
+        WHEN 2 THEN 'WYSWIETLENIE_FORMULARZA'
+        ELSE 'WYDRUK'
+    END,
+     -- Generowanie losowego znacznika czasu dla kolumny CZAS_AKTYWNOSCI
+    TIMESTAMP '2022-08-01 00:00:00' + (random() * (timestamp '2022-08-01 00:10:00' - timestamp '2022-08-01 00:00:00'))::interval,
+    -- Generowanie losowej wartości dla kolumny LOGIN
+    'user_' || floor(random() * 1000)::text
+FROM generate_series(1, 10000)
+;
+
+
+/* Wybór loginów i rodzajów zdarzeń z tabeli LOGI_SYSTEMOWE, które mają więcej niż 100 aktywności */
+SELECT 
+    LOGIN,
+    RODZAJ,
+    COUNT(*) AS LICZBA_AKTYWNOSCI -- Liczba aktywności dla każdego loginu i rodzaju zdarzenia
+FROM 
+    LOGI_SYSTEMOWE
+GROUP BY 
+    LOGIN,
+    RODZAJ
+HAVING 
+    COUNT(*) > 100 -- Filtrowanie wyników, aby wyświetlić tylko te z liczba aktywności większą niż 100
+;
+
+
+/* Wybór zdarzeń wraz z liczbą zdarzeń przed każdym z nich w ciągu ostatnich 5 minut */
+SELECT 
+    l1.ID,
+    l1.RODZAJ,
+    l1.CZAS_AKTYWNOSCI,
+    l1.LOGIN,
+    COUNT(l2.*) AS LICZBA_WYDARZEN_PRZED -- Liczba zdarzeń, które miały miejsce w ciągu ostatnich 5 minut
+FROM 
+    LOGI_SYSTEMOWE l1
+    LEFT JOIN LOGI_SYSTEMOWE l2 
+        ON l2.LOGIN = l1.LOGIN 
+        AND l2.CZAS_AKTYWNOSCI BETWEEN (l1.CZAS_AKTYWNOSCI - interval '5 minutes') AND l1.CZAS_AKTYWNOSCI
+GROUP BY 
+    l1.ID,
+    l1.RODZAJ,
+    l1.CZAS_AKTYWNOSCI,
+    l1.LOGIN
+ORDER BY 
+    l1.LOGIN ASC, -- Sortowanie wyników według LOGIN w porządku rosnącym
+    l1.CZAS_AKTYWNOSCI ASC -- Sortowanie wyników według CZAS_AKTYWNOSCI w porządku rosnącym
+;

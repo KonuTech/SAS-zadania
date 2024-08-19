@@ -1,0 +1,307 @@
+/* ZADANIA
+1. Wybierz z tabeli test_baza1 NUMBERY z END_DT większą od dziś oraz mniejszą niż 90 dni od dziś oraz z SEGMENTEM 
+small i soho. Do tych danych dopisz rekomendacje ofertowe (PLAN) z tabeli test_baza2.
+Jeżeli w drugiej tabeli nie ma rekomendacji to przypisz S dla soho oraz M dla small. 
+Wyniki zapisz do tabeli tmp.
+
+2. Podsumuj wyniki z tabeli tmp - liczba rekomendacji per PLAN.
+Wyniki posortuj po rekomendacji zgodnie z kolejnością S, M, L, X.
+
+3. Utwórz rekomendację per ID. Dla każdego ID z tabeli test_baza2 wybierz taką rekomendację, 
+która na danym ID występuje najczęściej. W przypadku dopasowania kilku rekomendacji o tej samej 
+liczności - wybierz wyższą (S<M<L<X).
+Przykładowo jeśli dla ID=1 mamy dwie rekomendacje M, dwie rekomendacje S oraz jedną rekomendację X - wybierz M.
+
+4. Dla każdego id wypisz listę rekomendacji w nowej kolumnie w formacie "plan: number, number, plan: number, number"
+np. M: 577290614, 581909797, 593369145, S: 512000217, 524579635, 546508046, 577773401, X: 553705869.
+
+Rozwiązania zapisz w postaci gotowego kodu SAS 4GL lub SQL.
+
+5. Zapisz tabelę z pliku tab.xlsx w kodzie html.
+*/
+
+
+/* IMPORT DANYCH */
+
+%LET libname = work;
+%LET tablename1 = TEST_BAZA1;
+%LET tablename2 = TEST_BAZA2;
+%LET filename1 = '/home/borowiec.k/&tablename1..csv';
+%LET filename2 = '/home/borowiec.k/&tablename2..csv';
+
+PROC FORMAT;
+	PICTURE mydatetimefmt OTHER='%0d.%0m.%Y %0H:%0M:%0S' (DATATYPE=DATETIME);
+RUN;
+
+proc datasets lib=&libname nolist;
+	delete
+     &tablename1
+     &tablename2
+     &tablename1._filtered merged tmp tmp_unique
+     &tablename2._filtered concatenated final_format max_plan 
+		max_plan_joined plan plan_counts tst;
+quit;
+
+%macro import_data(tablename, filename);
+	%if &tablename=TEST_BAZA1 %then
+		%do;
+			%let columns = ID $ TEMP_NUMBER $ END_DT SEGMENT $;
+			%let informat = ID $8. TEMP_NUMBER $12. END_DT anydtdtm40. SEGMENT $7.;
+			%let format = ID $8. END_DT mydatetimefmt. SEGMENT $7.;
+			%let process_number = 1;
+			%let sort_by = ID NUMBER END_DT SEGMENT;
+		%end;
+	%else %if &tablename=TEST_BAZA2 %then
+		%do;
+			%let columns = ID $ NUMBER $ PLAN $;
+			%let informat = ID $8. NUMBER $12. PLAN $50.;
+			%let format = ID $8. NUMBER $12. PLAN $50.;
+			%let process_number = 0;
+			%let sort_by = ID NUMBER PLAN;
+		%end;
+
+	DATA &libname..&tablename;
+		%let _EFIERR_ = 0;
+		INFILE "&filename" DLM=';' MISSOVER DSD FIRSTOBS=2 ENCODING="UTF-8";
+		INFORMAT &informat;
+		FORMAT &format;
+		INPUT &columns;
+
+		%if &process_number=1 %then
+			%do;
+				NUMBER=compress(TEMP_NUMBER, ' ');
+				DROP TEMP_NUMBER;
+			%end;
+
+		if _ERROR_ then
+			call symputx('_EFIERR_', 1);
+	RUN;
+
+	PROC SORT DATA=&libname..&tablename;
+		BY &sort_by;
+	RUN;
+
+%mend import_data;
+
+%import_data(&tablename1, '/home/borowiec.k/&tablename1..csv');
+%import_data(&tablename2, '/home/borowiec.k/&tablename2..csv');
+
+
+
+
+
+
+
+/* ZADANIE 1. */
+%macro filter_and_merge(tablename1, tablename2);
+	DATA &libname..&tablename1._filtered;
+		SET &libname..&tablename1;
+
+		IF (datepart(END_DT) <=today() - 90 OR datepart(END_DT) > today()) AND 
+           (lowcase(SEGMENT)='small' OR lowcase(SEGMENT)='soho');
+	RUN;
+
+	DATA &libname..merged;
+		MERGE &libname..&tablename1._filtered (IN=a KEEP=ID NUMBER SEGMENT) 
+			&libname..&tablename2 (IN=b KEEP=ID NUMBER PLAN);
+		BY ID NUMBER;
+
+		IF a;
+
+		IF missing(PLAN) THEN
+			DO;
+
+				IF lowcase(SEGMENT)='soho' THEN
+					PLAN='S';
+				ELSE IF lowcase(SEGMENT)='small' THEN
+					PLAN='M';
+			END;
+	RUN;
+
+	PROC SORT DATA=&libname..merged OUT=&libname..tmp (DROP=ID SEGMENT) NODUPKEY;
+		BY NUMBER PLAN;
+	RUN;
+
+%mend filter_and_merge;
+
+%filter_and_merge(TEST_BAZA1, TEST_BAZA2);
+
+PROC CONTENTS DATA=&libname..&tablename1;
+RUN;
+
+PROC CONTENTS DATA=&libname..&tablename2;
+RUN;
+
+PROC CONTENTS DATA=&libname..merged;
+RUN;
+
+PROC CONTENTS DATA=&libname..tmp;
+RUN;
+
+PROC SQL;
+	SELECT DISTINCT SEGMENT FROM &libname..&tablename1;
+	SELECT DISTINCT PLAN FROM &libname..&tablename2;
+QUIT;
+
+PROC PRINT DATA=&libname..&tablename1 (FIRSTOBS=1 OBS=20);
+RUN;
+
+PROC PRINT DATA=&libname..&tablename2 (FIRSTOBS=1 OBS=20);
+RUN;
+
+PROC PRINT DATA=&libname..merged (FIRSTOBS=1 OBS=20);
+RUN;
+
+PROC PRINT DATA=&libname..tmp (FIRSTOBS=1 OBS=20);
+RUN;
+
+
+
+
+
+
+
+/* ZADANIE 2. */
+proc format;
+	value $plan_order 'S'='1' 'M'='2' 'L'='3' 'X'='4';
+run;
+
+proc freq data=&libname..tmp;
+	tables PLAN / out=&libname..plan_counts (drop=percent);
+run;
+
+data &libname..plan_counts;
+	set &libname..plan_counts;
+	plansort=input(put(PLAN, $plan_order.), 8.);
+run;
+
+proc sort data=&libname..plan_counts;
+	by plansort;
+run;
+
+data &libname..plan_counts;
+	set &libname..plan_counts (drop=plansort);
+run;
+
+
+
+
+
+
+
+/* ZADANIE 3. */
+PROC SQL;
+    CREATE TABLE max_plan AS
+    SELECT
+      ID
+     ,PLAN
+    FROM (
+        SELECT ID, PLAN,
+                (CASE 
+                    WHEN PLAN = 'S' THEN 0
+                    WHEN PLAN = 'M' THEN 1
+                    WHEN PLAN = 'L' THEN 2
+                    WHEN PLAN = 'X' THEN 3
+                    ELSE 4
+                END) AS PlanSortValue,
+                COUNT(NUMBER) AS count
+        FROM work.test_baza2
+        GROUP BY ID, PLAN
+    ) AS subquery
+    WHERE PlanSortValue = (
+
+        SELECT MAX(PlanSortValue)
+        FROM (
+            SELECT ID,
+                   (CASE 
+                        WHEN PLAN = 'S' THEN 0
+                        WHEN PLAN = 'M' THEN 1
+                        WHEN PLAN = 'L' THEN 2
+                        WHEN PLAN = 'X' THEN 3
+                        ELSE 4
+                    END) AS PlanSortValue
+            FROM work.test_baza2
+            GROUP BY ID, PLAN
+        ) AS max_plan_values
+        WHERE max_plan_values.ID = subquery.ID
+    )
+    ORDER BY ID, PlanSortValue DESC, count DESC;
+QUIT;
+
+
+
+
+
+
+/* ZADANIE 4. */
+PROC SQL;
+    CREATE TABLE max_plan AS
+    SELECT
+       ID
+      ,PLAN
+      ,PlanSortValue
+      ,count
+    FROM (
+        SELECT ID, PLAN,
+                (CASE 
+                    WHEN PLAN = 'S' THEN 0
+                    WHEN PLAN = 'M' THEN 1
+                    WHEN PLAN = 'L' THEN 2
+                    WHEN PLAN = 'X' THEN 3
+                    ELSE 4
+                END) AS PlanSortValue,
+                COUNT(NUMBER) AS count
+        FROM work.test_baza2
+        GROUP BY ID, PLAN
+    ) AS subquery
+    WHERE PlanSortValue = (
+        SELECT MAX(PlanSortValue)
+        FROM (
+            SELECT ID,
+                   (CASE 
+                        WHEN PLAN = 'S' THEN 0
+                        WHEN PLAN = 'M' THEN 1
+                        WHEN PLAN = 'L' THEN 2
+                        WHEN PLAN = 'X' THEN 3
+                        ELSE 4
+                    END) AS PlanSortValue
+            FROM work.test_baza2
+            GROUP BY ID, PLAN
+        ) AS max_plan_values
+        WHERE max_plan_values.ID = subquery.ID
+    )
+    ORDER BY ID, PlanSortValue DESC, count DESC;
+
+
+    CREATE TABLE max_plan_joined AS
+    SELECT
+       a.ID
+      ,a.PLAN
+      ,b.*
+    FROM max_plan AS a
+    LEFT JOIN work.test_baza2 AS b
+    ON a.ID = b.ID;
+QUIT;
+
+
+proc sort data=work.max_plan_joined;
+	by ID PLAN NUMBER;
+run;
+
+data concatenated (keep=ID string);
+	set work.max_plan_joined;
+	by ID PLAN;
+	length string $111.;
+	retain string;
+
+	if first.ID then
+		string=catx(': ', PLAN, NUMBER);
+	else
+		string=catx(', ', string, NUMBER);
+
+	if last.ID then
+		do;
+			output;
+			call missing(string);
+		end;
+run;

@@ -1,0 +1,375 @@
+/* ZADANIA
+1. Wybierz z tabeli test_baza1 NUMBERY z END_DT większą od dziś oraz mniejszą niż 90 dni od dziś oraz z SEGMENTEM 
+small i soho. Do tych danych dopisz rekomendacje ofertowe (PLAN) z tabeli test_baza2.
+Jeżeli w drugiej tabeli nie ma rekomendacji to przypisz S dla soho oraz M dla small. 
+Wyniki zapisz do tabeli tmp.
+
+2. Podsumuj wyniki z tabeli tmp - liczba rekomendacji per PLAN.
+Wyniki posortuj po rekomendacji zgodnie z kolejnością S, M, L, X.
+
+3. Utwórz rekomendację per ID. Dla każdego ID z tabeli test_baza2 wybierz taką rekomendację, 
+która na danym ID występuje najczęściej. W przypadku dopasowania kilku rekomendacji o tej samej 
+liczności - wybierz wyższą (S<M<L<X).
+Przykładowo jeśli dla ID=1 mamy dwie rekomendacje M, dwie rekomendacje S oraz jedną rekomendację X - wybierz M.
+
+4. Dla każdego id wypisz listę rekomendacji w nowej kolumnie w formacie "plan: number, number, plan: number, number"
+np. M: 577290614, 581909797, 593369145, S: 512000217, 524579635, 546508046, 577773401, X: 553705869.
+
+Rozwiązania zapisz w postaci gotowego kodu SAS 4GL lub SQL.
+
+5. Zapisz tabelę z pliku tab.xlsx w kodzie html.
+*/
+
+
+/* IMPORT DANYCH */
+
+/* Definiowanie zmiennych makro dla nazwy biblioteki roboczej */
+%LET libname = work; /* Nazwa biblioteki roboczej, gdzie będą zaimportowane dane */
+
+/* Definiowanie zmiennych makro dla nazw tabel i plików */
+%LET tablename1 = TEST_BAZA1; /* Nazwa pierwszej tabeli */
+%LET tablename2 = TEST_BAZA2; /* Nazwa drugiej tabeli */
+%LET filename1 = '/home/borowiec.k/&tablename1..csv'; /* Ścieżka do pliku CSV dla pierwszej tabeli */
+%LET filename2 = '/home/borowiec.k/&tablename2..csv'; /* Ścieżka do pliku CSV dla drugiej tabeli */
+
+/* Definiowanie formatu dla daty i czasu */
+PROC FORMAT;
+	PICTURE mydatetimefmt OTHER='%0d.%0m.%Y %0H:%0M:%0S' (DATATYPE=DATETIME); /* Format daty i czasu, który będzie używany w danych */
+RUN;
+
+/* Usunięcie tabel i zestawów danych z biblioteki roboczej */
+proc datasets lib=&libname nolist;
+	delete
+     &tablename1 /* Usunięcie tabeli TEST_BAZA1, jeśli istnieje */
+     &tablename2 /* Usunięcie tabeli TEST_BAZA2, jeśli istnieje */
+     &tablename1._filtered /* Usunięcie tymczasowej tabeli przefiltrowanej dla TEST_BAZA1 */
+     merged /* Usunięcie tymczasowej tabeli połączonej */
+     tmp /* Usunięcie tymczasowej tabeli */
+     tmp_unique /* Usunięcie tabeli tymczasowej z unikalnymi rekordami */
+     &tablename2._filtered /* Usunięcie tymczasowej tabeli przefiltrowanej dla TEST_BAZA2 */
+     concatenated /* Usunięcie tymczasowej tabeli z połączonymi danymi */
+     final_format /* Usunięcie tabeli z ostatecznym formatowaniem */
+     max_plan /* Usunięcie tabeli z maksymalnym planem */
+		max_plan_joined /* Usunięcie tabeli z połączonym maksymalnym planem */
+     plan /* Usunięcie tabeli z planami */
+     plan_counts /* Usunięcie tabeli z liczbą planów */
+     tst /* Usunięcie tabeli testowej */
+;
+quit;
+
+/* Makro do importowania danych z pliku CSV do tabeli SAS */
+%macro import_data(tablename, filename);
+	/* Ustawienia specyficzne dla TEST_BAZA1 */
+	%if &tablename=TEST_BAZA1 %then
+		%do;
+			%let columns = ID $ TEMP_NUMBER $ END_DT SEGMENT $; /* Definicja kolumn do zaimportowania dla TEST_BAZA1 */
+			%let informat = ID $8. TEMP_NUMBER $12. END_DT anydtdtm40. SEGMENT $7.; /* Definicja informatów dla TEST_BAZA1 */
+			%let format = ID $8. END_DT mydatetimefmt. SEGMENT $7.; /* Definicja formatów dla TEST_BAZA1 */
+			%let process_number = 1; /* Numer procesu do dalszego przetwarzania dla TEST_BAZA1 */
+			%let sort_by = ID NUMBER END_DT SEGMENT; /* Kolumny do sortowania dla TEST_BAZA1 */
+		%end;
+	/* Ustawienia specyficzne dla TEST_BAZA2 */
+	%else %if &tablename=TEST_BAZA2 %then
+		%do;
+			%let columns = ID $ NUMBER $ PLAN $; /* Definicja kolumn do zaimportowania dla TEST_BAZA2 */
+			%let informat = ID $8. NUMBER $12. PLAN $50.; /* Definicja informatów dla TEST_BAZA2 */
+			%let format = ID $8. NUMBER $12. PLAN $50.; /* Definicja formatów dla TEST_BAZA2 */
+			%let process_number = 0; /* Numer procesu do dalszego przetwarzania dla TEST_BAZA2 */
+			%let sort_by = ID NUMBER PLAN; /* Kolumny do sortowania dla TEST_BAZA2 */
+		%end;
+
+	/* Importowanie danych z pliku CSV do tabeli SAS */
+	DATA &libname..&tablename;
+		%let _EFIERR_ = 0; /* Inicjalizacja zmiennej do śledzenia błędów */
+		INFILE "&filename" DLM=';' MISSOVER DSD FIRSTOBS=2 ENCODING="UTF-8"; /* Wczytanie pliku CSV z odpowiednim kodowaniem i separatorami */
+		INFORMAT &informat; /* Ustawienie informatów dla wczytywanych danych */
+		FORMAT &format; /* Ustawienie formatów dla danych wyjściowych */
+		INPUT &columns; /* Wczytanie danych z określonych kolumn */
+
+		/* Przetwarzanie danych specyficznych dla TEST_BAZA1 */
+		%if &process_number=1 %then
+			%do;
+				NUMBER=compress(TEMP_NUMBER, ' '); /* Usunięcie spacji z kolumny TEMP_NUMBER i przypisanie wartości do NUMBER */
+				DROP TEMP_NUMBER; /* Usunięcie kolumny TEMP_NUMBER */
+			%end;
+
+		/* Obsługa błędów podczas importowania danych */
+		if _ERROR_ then
+			call symputx('_EFIERR_', 1); /* Ustawienie zmiennej błędu na 1, jeśli wystąpił błąd */
+	RUN;
+
+	/* Sortowanie zaimportowanych danych według określonych kolumn */
+	PROC SORT DATA=&libname..&tablename;
+		BY &sort_by; /* Sortowanie według kolumn zdefiniowanych w zmiennej sort_by */
+	RUN;
+
+%mend import_data;
+
+/* Wywołanie makra import_data dla pierwszej tabeli */
+%import_data(&tablename1, '/home/borowiec.k/&tablename1..csv');
+/* Wywołanie makra import_data dla drugiej tabeli */
+%import_data(&tablename2, '/home/borowiec.k/&tablename2..csv');
+
+
+
+
+
+
+
+
+/* ZADANIE 1. */
+
+/* Definiowanie makra do filtrowania i scalania danych */
+%macro filter_and_merge(tablename1, tablename2);
+
+	/* Filtrowanie danych z pierwszej tabeli */
+	DATA &libname..&tablename1._filtered;
+		SET &libname..&tablename1; /* Wczytanie danych z tabeli &tablename1 */
+
+		/* Warunek filtrowania danych: data musi być w określonym zakresie oraz segment musi być 'small' lub 'soho' */
+		IF (datepart(END_DT) <= today() - 90 OR datepart(END_DT) > today()) AND 
+           (lowcase(SEGMENT)='small' OR lowcase(SEGMENT)='soho');
+	RUN;
+
+	/* Łączenie przefiltrowanych danych z pierwszej tabeli z danymi z drugiej tabeli */
+	DATA &libname..merged;
+		MERGE &libname..&tablename1._filtered (IN=a KEEP=ID NUMBER SEGMENT) 
+			&libname..&tablename2 (IN=b KEEP=ID NUMBER PLAN); /* Scalanie tabel: zachowanie tylko niezbędnych kolumn */
+		BY ID NUMBER; /* Łączenie według kolumn ID i NUMBER */
+
+		IF a; /* Zachowanie tylko rekordów z przefiltrowanej tabeli &tablename1 */
+
+		/* Uzupełnianie brakujących wartości w kolumnie PLAN */
+		IF missing(PLAN) THEN
+			DO;
+
+				IF lowcase(SEGMENT)='soho' THEN
+					PLAN='S'; /* Przypisanie wartości 'S' dla segmentu 'soho' */
+				ELSE IF lowcase(SEGMENT)='small' THEN
+					PLAN='M'; /* Przypisanie wartości 'M' dla segmentu 'small' */
+			END;
+	RUN;
+
+	/* Sortowanie połączonych danych i usuwanie duplikatów */
+	PROC SORT DATA=&libname..merged OUT=&libname..tmp (DROP=ID SEGMENT) NODUPKEY;
+		BY NUMBER PLAN; /* Sortowanie według kolumn NUMBER i PLAN */
+	RUN;
+
+%mend filter_and_merge;
+
+/* Wywołanie makra do filtrowania i scalania danych dla tabel TEST_BAZA1 i TEST_BAZA2 */
+%filter_and_merge(TEST_BAZA1, TEST_BAZA2);
+
+/* Wyświetlenie informacji o strukturze tabeli TEST_BAZA1 */
+PROC CONTENTS DATA=&libname..&tablename1;
+RUN;
+
+/* Wyświetlenie informacji o strukturze tabeli TEST_BAZA2 */
+PROC CONTENTS DATA=&libname..&tablename2;
+RUN;
+
+/* Wyświetlenie informacji o strukturze połączonej tabeli merged */
+PROC CONTENTS DATA=&libname..merged;
+RUN;
+
+/* Wyświetlenie informacji o strukturze tabeli tymczasowej tmp */
+PROC CONTENTS DATA=&libname..tmp;
+RUN;
+
+/* Wyświetlenie unikalnych wartości kolumny SEGMENT z tabeli TEST_BAZA1 */
+PROC SQL;
+	SELECT DISTINCT SEGMENT FROM &libname..&tablename1;
+QUIT;
+
+/* Wyświetlenie unikalnych wartości kolumny PLAN z tabeli TEST_BAZA2 */
+PROC SQL;
+	SELECT DISTINCT PLAN FROM &libname..&tablename2;
+QUIT;
+
+/* Wyświetlenie pierwszych 20 wierszy tabeli TEST_BAZA1 */
+PROC PRINT DATA=&libname..&tablename1 (FIRSTOBS=1 OBS=20);
+RUN;
+
+/* Wyświetlenie pierwszych 20 wierszy tabeli TEST_BAZA2 */
+PROC PRINT DATA=&libname..&tablename2 (FIRSTOBS=1 OBS=20);
+RUN;
+
+/* Wyświetlenie pierwszych 20 wierszy tabeli połączonej merged */
+PROC PRINT DATA=&libname..merged (FIRSTOBS=1 OBS=20);
+RUN;
+
+/* Wyświetlenie pierwszych 20 wierszy tabeli tymczasowej tmp */
+PROC PRINT DATA=&libname..tmp (FIRSTOBS=1 OBS=20);
+RUN;
+
+
+
+
+
+
+
+* ZADANIE 2. */
+
+/* Definiowanie formatu do zamiany wartości PLAN na numeryczne kody */
+proc format;
+	value $plan_order 'S'='1' 'M'='2' 'L'='3' 'X'='4'; /* Przypisanie wartości tekstowych PLAN do kodów numerycznych */
+run;
+
+/* Obliczanie częstości występowania wartości PLAN w tabeli tmp */
+proc freq data=&libname..tmp;
+	tables PLAN / out=&libname..plan_counts (drop=percent); /* Zapisanie wyników do tabeli plan_counts bez kolumny percent */
+run;
+
+/* Dodawanie kolumny do tabeli plan_counts z numerem odpowiadającym wartościom PLAN */
+data &libname..plan_counts;
+	set &libname..plan_counts; /* Wczytanie danych z tabeli plan_counts */
+
+	/* Konwersja wartości PLAN na numeryczne kody przy użyciu zdefiniowanego formatu */
+	plansort = input(put(PLAN, $plan_order.), 8.); /* Dodanie kolumny plansort z kodami numerycznymi */
+run;
+
+/* Sortowanie tabeli plan_counts według kolumny plansort */
+proc sort data=&libname..plan_counts;
+	by plansort; /* Sortowanie według numerycznych kodów plansort */
+run;
+
+/* Usuwanie kolumny plansort z tabeli plan_counts */
+data &libname..plan_counts;
+	set &libname..plan_counts (drop=plansort); /* Wczytanie danych z tabeli plan_counts i usunięcie kolumny plansort */
+run;
+
+
+
+
+
+
+
+/* ZADANIE 3. */
+PROC SQL;
+    /* Tworzenie tabeli max_plan z wynikami zapytania */
+    CREATE TABLE max_plan AS
+    SELECT
+      ID, /* Wybór kolumny ID */
+      PLAN /* Wybór kolumny PLAN */
+    FROM (
+        /* Podzapytanie do obliczenia wartości sortowania PLAN oraz liczby wystąpień */
+        SELECT ID, PLAN,
+                (CASE 
+                    WHEN PLAN = 'S' THEN 0 /* Przypisanie wartości 0 dla PLAN = 'S' */
+                    WHEN PLAN = 'M' THEN 1 /* Przypisanie wartości 1 dla PLAN = 'M' */
+                    WHEN PLAN = 'L' THEN 2 /* Przypisanie wartości 2 dla PLAN = 'L' */
+                    WHEN PLAN = 'X' THEN 3 /* Przypisanie wartości 3 dla PLAN = 'X' */
+                    ELSE 4 /* Przypisanie wartości 4 dla innych wartości PLAN */
+                END) AS PlanSortValue, /* Obliczenie wartości sortowania dla PLAN */
+                COUNT(NUMBER) AS count /* Liczenie liczby wystąpień NUMBER */
+        FROM work.test_baza2 /* Wskazanie tabeli źródłowej test_baza2 */
+        GROUP BY ID, PLAN /* Grupowanie według ID i PLAN */
+    ) AS subquery /* Alias dla podzapytania */
+    WHERE PlanSortValue = (
+
+        /* Podzapytanie do znalezienia maksymalnej wartości PlanSortValue dla każdego ID */
+        SELECT MAX(PlanSortValue) /* Wybór maksymalnej wartości PlanSortValue */
+        FROM (
+            SELECT ID,
+                   (CASE 
+                        WHEN PLAN = 'S' THEN 0 /* Przypisanie wartości 0 dla PLAN = 'S' */
+                        WHEN PLAN = 'M' THEN 1 /* Przypisanie wartości 1 dla PLAN = 'M' */
+                        WHEN PLAN = 'L' THEN 2 /* Przypisanie wartości 2 dla PLAN = 'L' */
+                        WHEN PLAN = 'X' THEN 3 /* Przypisanie wartości 3 dla PLAN = 'X' */
+                        ELSE 4 /* Przypisanie wartości 4 dla innych wartości PLAN */
+                    END) AS PlanSortValue /* Obliczenie wartości sortowania dla PLAN */
+            FROM work.test_baza2 /* Wskazanie tabeli źródłowej test_baza2 */
+            GROUP BY ID, PLAN /* Grupowanie według ID i PLAN */
+        ) AS max_plan_values /* Alias dla podzapytania maksymalnych wartości PLAN */
+        WHERE max_plan_values.ID = subquery.ID /* Warunek łączenia z głównym zapytaniem */
+    )
+    /* Sortowanie wyników według ID, wartości sortowania PLAN (malejąco) i liczby wystąpień (malejąco) */
+    ORDER BY ID, PlanSortValue DESC, count DESC;
+QUIT;
+
+
+
+
+
+
+/* ZADANIE 4. */
+PROC SQL;
+    /* Tworzenie tabeli max_plan z wynikami zapytania */
+    CREATE TABLE max_plan AS
+    SELECT
+       ID, /* Wybór kolumny ID */
+       PLAN, /* Wybór kolumny PLAN */
+       PlanSortValue, /* Wybór kolumny PlanSortValue (wartość sortowania dla PLAN) */
+       count /* Wybór kolumny count (liczba wystąpień NUMBER) */
+    FROM (
+        /* Podzapytanie do obliczenia wartości sortowania PLAN oraz liczby wystąpień */
+        SELECT ID, PLAN,
+                (CASE 
+                    WHEN PLAN = 'S' THEN 0 /* Przypisanie wartości 0 dla PLAN = 'S' */
+                    WHEN PLAN = 'M' THEN 1 /* Przypisanie wartości 1 dla PLAN = 'M' */
+                    WHEN PLAN = 'L' THEN 2 /* Przypisanie wartości 2 dla PLAN = 'L' */
+                    WHEN PLAN = 'X' THEN 3 /* Przypisanie wartości 3 dla PLAN = 'X' */
+                    ELSE 4 /* Przypisanie wartości 4 dla innych wartości PLAN */
+                END) AS PlanSortValue, /* Obliczenie wartości sortowania dla PLAN */
+                COUNT(NUMBER) AS count /* Liczenie liczby wystąpień NUMBER */
+        FROM work.test_baza2 /* Wskazanie tabeli źródłowej test_baza2 */
+        GROUP BY ID, PLAN /* Grupowanie według ID i PLAN */
+    ) AS subquery /* Alias dla podzapytania */
+    WHERE PlanSortValue = (
+        /* Podzapytanie do znalezienia maksymalnej wartości PlanSortValue dla każdego ID */
+        SELECT MAX(PlanSortValue) /* Wybór maksymalnej wartości PlanSortValue */
+        FROM (
+            SELECT ID,
+                   (CASE 
+                        WHEN PLAN = 'S' THEN 0 /* Przypisanie wartości 0 dla PLAN = 'S' */
+                        WHEN PLAN = 'M' THEN 1 /* Przypisanie wartości 1 dla PLAN = 'M' */
+                        WHEN PLAN = 'L' THEN 2 /* Przypisanie wartości 2 dla PLAN = 'L' */
+                        WHEN PLAN = 'X' THEN 3 /* Przypisanie wartości 3 dla PLAN = 'X' */
+                        ELSE 4 /* Przypisanie wartości 4 dla innych wartości PLAN */
+                    END) AS PlanSortValue /* Obliczenie wartości sortowania dla PLAN */
+            FROM work.test_baza2 /* Wskazanie tabeli źródłowej test_baza2 */
+            GROUP BY ID, PLAN /* Grupowanie według ID i PLAN */
+        ) AS max_plan_values /* Alias dla podzapytania maksymalnych wartości PLAN */
+        WHERE max_plan_values.ID = subquery.ID /* Warunek łączenia z głównym zapytaniem */
+    )
+    /* Sortowanie wyników według ID, wartości sortowania PLAN (malejąco) i liczby wystąpień (malejąco) */
+    ORDER BY ID, PlanSortValue DESC, count DESC;
+
+    /* Tworzenie tabeli max_plan_joined poprzez dołączenie dodatkowych danych z test_baza2 */
+    CREATE TABLE max_plan_joined AS
+    SELECT
+       a.ID, /* Wybór kolumny ID z tabeli max_plan */
+       a.PLAN, /* Wybór kolumny PLAN z tabeli max_plan */
+       b.* /* Wybór wszystkich kolumn z tabeli work.test_baza2 */
+    FROM max_plan AS a /* Wskazanie tabeli max_plan jako a */
+    LEFT JOIN work.test_baza2 AS b /* Lewo-łączenie z tabelą work.test_baza2 jako b */
+    ON a.ID = b.ID; /* Warunek łączenia: dopasowanie ID z obu tabel */
+
+QUIT;
+
+proc sort data=work.max_plan_joined;
+    /* Sortowanie tabeli max_plan_joined według ID, PLAN i NUMBER */
+	by ID PLAN NUMBER;
+run;
+
+data concatenated (keep=ID string);
+    /* Przetwarzanie tabeli max_plan_joined w celu utworzenia tabeli concatenated */
+	set work.max_plan_joined;
+	by ID PLAN; /* Grupowanie danych według ID i PLAN */
+	length string $111.; /* Określenie długości zmiennej string */
+	retain string; /* Zachowanie wartości zmiennej string między obserwacjami */
+
+	if first.ID then
+        /* Inicjalizacja zmiennej string dla pierwszego ID */
+		string=catx(': ', PLAN, NUMBER);
+	else
+        /* Dodawanie wartości NUMBER do zmiennej string dla pozostałych wierszy tego samego ID */
+		string=catx(', ', string, NUMBER);
+
+	if last.ID then
+        /* Zapis do tabeli wynikowej i resetowanie zmiennej string dla ostatniego wiersza danego ID */
+		do;
+			output;
+			call missing(string);
+		end;
+run;
